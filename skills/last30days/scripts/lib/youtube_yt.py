@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import sys
 import tempfile
@@ -134,13 +135,14 @@ def _wrap_ytdlp_cmd(cmd: List[str]) -> List[str]:
 
     Args are shell-quoted to survive the remote shell. Uses BatchMode=yes so
     a misconfigured key fails fast instead of hanging on a password prompt.
+    The `--` option terminator prevents an SSH option-injection if
+    LAST30DAYS_YT_SSH_HOST were ever set to a value starting with `-`.
     """
     host = _ytdlp_ssh_host()
     if not host:
         return cmd
-    import shlex
     remote_cmd = " ".join(shlex.quote(a) for a in cmd)
-    return ["ssh", "-o", "BatchMode=yes", host, remote_cmd]
+    return ["ssh", "-o", "BatchMode=yes", "--", host, remote_cmd]
 
 
 def _extract_core_subject(topic: str) -> str:
@@ -520,14 +522,15 @@ def fetch_transcript(video_id: str, temp_dir: str) -> Optional[str]:
     # file on the remote host that we can't easily read back. Skip it and
     # use the HTTP transcript fallback (different YouTube endpoint, less
     # bot-walled, works fine from datacenter IPs).
-    use_ytdlp = is_ytdlp_installed() and not _ytdlp_ssh_host()
+    ssh_host = _ytdlp_ssh_host()
+    use_ytdlp = is_ytdlp_installed() and not ssh_host
     if use_ytdlp:
         raw_vtt = _fetch_transcript_ytdlp(video_id, temp_dir)
         if not raw_vtt:
             _log(f"yt-dlp transcript failed for {video_id}, trying direct HTTP fallback")
             raw_vtt = _fetch_transcript_direct(video_id)
     else:
-        if _ytdlp_ssh_host():
+        if ssh_host:
             _log("SSH-routing active, using direct HTTP transcript fetch")
         else:
             _log("yt-dlp not installed, using direct HTTP transcript fetch")

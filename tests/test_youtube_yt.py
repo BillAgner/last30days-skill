@@ -452,10 +452,13 @@ class TestYtdlpSSHRouting(unittest.TestCase):
         self.assertEqual(wrapped[0], "ssh")
         self.assertEqual(wrapped[1], "-o")
         self.assertEqual(wrapped[2], "BatchMode=yes")
-        self.assertEqual(wrapped[3], "macmini")
+        # `--` terminates SSH option parsing so a host starting with `-`
+        # (e.g. `-oProxyCommand=...`) cannot be reinterpreted as a flag.
+        self.assertEqual(wrapped[3], "--")
+        self.assertEqual(wrapped[4], "macmini")
         # Final arg is the shell-quoted command string
-        self.assertIn("yt-dlp", wrapped[4])
-        self.assertIn("ytsearch5:test", wrapped[4])
+        self.assertIn("yt-dlp", wrapped[5])
+        self.assertIn("ytsearch5:test", wrapped[5])
 
     def test_wrap_cmd_quotes_args_with_spaces(self):
         """Args containing spaces or special chars are shell-quoted."""
@@ -463,7 +466,21 @@ class TestYtdlpSSHRouting(unittest.TestCase):
         cmd = ["yt-dlp", "ytsearch5:hello world", "--dump-json"]
         wrapped = youtube_yt._wrap_ytdlp_cmd(cmd)
         # shlex.quote wraps the whole arg in single quotes when it contains spaces
-        self.assertIn("'ytsearch5:hello world'", wrapped[4])
+        self.assertIn("'ytsearch5:hello world'", wrapped[5])
+
+    def test_wrap_cmd_uses_option_terminator(self):
+        """`--` is inserted before host to prevent SSH option injection.
+
+        Without `--`, an env var like `LAST30DAYS_YT_SSH_HOST=-oProxyCommand=...`
+        would be parsed by ssh as an option flag. The terminator forces it
+        to be treated as a hostname (which will then fail clean if invalid).
+        """
+        os.environ["LAST30DAYS_YT_SSH_HOST"] = "-oFoo=bar"
+        cmd = ["yt-dlp", "--version"]
+        wrapped = youtube_yt._wrap_ytdlp_cmd(cmd)
+        # Find the `--` terminator and verify the host comes immediately after
+        dash_idx = wrapped.index("--")
+        self.assertEqual(wrapped[dash_idx + 1], "-oFoo=bar")
 
     def test_is_ytdlp_installed_short_circuits_with_ssh(self):
         """is_ytdlp_installed returns True without local check when SSH routing is on."""
@@ -489,11 +506,12 @@ class TestYtdlpSSHRouting(unittest.TestCase):
             youtube_yt.search_youtube("test", "2026-02-01", "2026-03-01")
         cmd = run_mock.call_args.args[0]
         self.assertEqual(cmd[0], "ssh")
-        self.assertEqual(cmd[3], "macmini")
-        # The shell-quoted yt-dlp invocation lives at index 4
-        self.assertIn("yt-dlp", cmd[4])
-        self.assertIn("--ignore-config", cmd[4])
-        self.assertIn("--no-cookies-from-browser", cmd[4])
+        self.assertEqual(cmd[3], "--")
+        self.assertEqual(cmd[4], "macmini")
+        # The shell-quoted yt-dlp invocation lives at index 5
+        self.assertIn("yt-dlp", cmd[5])
+        self.assertIn("--ignore-config", cmd[5])
+        self.assertIn("--no-cookies-from-browser", cmd[5])
 
 
 if __name__ == "__main__":
