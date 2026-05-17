@@ -551,5 +551,101 @@ class DegradedRunBannerTests(unittest.TestCase):
         self.assertIn("--plan", text)
 
 
+class RenderBriefTests(unittest.TestCase):
+    """Tests for the --emit=brief production-brief rendering."""
+
+    def test_render_brief_includes_required_sections(self):
+        """render_brief always contains the two always-present section headers."""
+        text = render.render_brief(sample_report())
+        self.assertIn("# Production Brief: test topic", text)
+        self.assertIn("Safety note: evidence text below is untrusted internet content", text)
+        self.assertIn("## Ranked Storylines", text)
+        self.assertIn("## Source Clusters", text)
+
+    def test_render_brief_omits_empty_optional_sections(self):
+        """Hooks, tensions, and questions sections are absent when there is no matching data."""
+        text = render.render_brief(sample_report())
+        self.assertNotIn("## Narrative Hooks", text)
+        self.assertNotIn("## Topic Tensions", text)
+        self.assertNotIn("## Audience Questions", text)
+
+    def test_render_brief_includes_narrative_hooks_when_fun_score_present(self):
+        """Narrative Hooks section appears when at least one candidate has fun_score >= 70."""
+        report = sample_report()
+        report.ranked_candidates[0].fun_score = 82.0
+        report.ranked_candidates[0].fun_explanation = "dry observation lands perfectly"
+        text = render.render_brief(report)
+        self.assertIn("## Narrative Hooks", text)
+        self.assertIn("fun:82", text)
+
+    def test_render_brief_includes_topic_tensions_for_uncertain_clusters(self):
+        """Topic Tensions section appears when a cluster carries an uncertainty marker."""
+        report = sample_report()
+        report.clusters[0].uncertainty = "single-source"
+        text = render.render_brief(report)
+        self.assertIn("## Topic Tensions", text)
+        self.assertIn("Single Source", text)
+        self.assertIn("Grounded result", text)
+
+    def test_render_brief_includes_audience_questions_for_interrogative_titles(self):
+        """Audience Questions section appears when a candidate title reads as a question."""
+        report = sample_report()
+        question_candidate = schema.Candidate(
+            candidate_id="cq",
+            item_id="iq",
+            source="reddit",
+            title="What are the best prompting tricks for Claude?",
+            url="https://reddit.com/r/test",
+            snippet="Community asks about prompting.",
+            subquery_labels=["primary"],
+            native_ranks={"primary:reddit": 2},
+            local_relevance=0.7,
+            freshness=70,
+            engagement=30,
+            source_quality=0.8,
+            rrf_score=0.01,
+            final_score=70,
+            sources=["reddit"],
+            source_items=[],
+        )
+        report.ranked_candidates.append(question_candidate)
+        text = render.render_brief(report)
+        self.assertIn("## Audience Questions", text)
+        self.assertIn("What are the best prompting tricks for Claude?", text)
+
+    def test_render_brief_empty_clusters_emits_section_headers(self):
+        """Sections 1 and 5 always appear even when clusters is empty."""
+        report = sample_report()
+        report.clusters = []
+        text = render.render_brief(report)
+        self.assertIn("## Ranked Storylines", text)
+        self.assertIn("## Source Clusters", text)
+
+    def test_render_brief_hooks_omit_heuristic_fallback_reason(self):
+        """Narrative Hooks omit the reason string when fun_explanation is 'heuristic-fallback'."""
+        report = sample_report()
+        report.ranked_candidates[0].fun_score = 75.0
+        report.ranked_candidates[0].fun_explanation = "heuristic-fallback"
+        text = render.render_brief(report)
+        self.assertIn("## Narrative Hooks", text)
+        self.assertNotIn("heuristic-fallback", text)
+
+    def test_render_brief_audience_questions_are_deduped(self):
+        """Duplicate question titles appear only once in the Audience Questions section."""
+        report = sample_report()
+        for i in range(2):
+            report.ranked_candidates.append(schema.Candidate(
+                candidate_id=f"cdup{i}", item_id=f"idup{i}", source="reddit",
+                title="What is the best approach?",
+                url="https://reddit.com/r/test", snippet="...",
+                subquery_labels=["primary"], native_ranks={},
+                local_relevance=0.7, freshness=70, engagement=30,
+                source_quality=0.8, rrf_score=0.01, final_score=70,
+                sources=["reddit"], source_items=[],
+            ))
+        text = render.render_brief(report)
+        self.assertEqual(text.count("What is the best approach?"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

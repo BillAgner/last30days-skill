@@ -961,6 +961,122 @@ def render_context(report: schema.Report, cluster_limit: int = 6) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def render_brief(report: schema.Report, cluster_limit: int = 8) -> str:
+    """Production brief for downstream pipelines (video, scripting, structured synthesis).
+
+    Reshapes ranked pipeline output into five sections that scripting pipelines
+    can consume directly: Ranked Storylines, Narrative Hooks, Topic Tensions,
+    Audience Questions, and Source Clusters. Sections 2-4 are omitted when there
+    is no matching data; Sections 1 and 5 always appear.
+    """
+    non_empty = [s for s, items in sorted(report.items_by_source.items()) if items]
+    lines = [
+        f"# Production Brief: {report.topic}",
+        "",
+        *_assistant_safety_lines(),
+        f"- Date range: {report.range_from} to {report.range_to}",
+        f"- Sources: {len(non_empty)} active ({', '.join(_source_label(s) for s in non_empty)})" if non_empty else "- Sources: none",
+        "",
+    ]
+
+    lines.append("## Ranked Storylines")
+    lines.append("")
+    candidate_by_id = {c.candidate_id: c for c in report.ranked_candidates}
+    for i, cluster in enumerate(report.clusters[:cluster_limit], start=1):
+        source_tags = ", ".join(_source_label(s) for s in cluster.sources)
+        qualifier = f" [{cluster.uncertainty.replace('-', ' ')}]" if cluster.uncertainty else ""
+        lines.append(f"### {i}. {cluster.title} (score {cluster.score:.0f}, {source_tags}){qualifier}")
+        for cid in cluster.representative_ids[:2]:
+            candidate = candidate_by_id.get(cid)
+            if not candidate:
+                continue
+            if candidate.snippet:
+                lines.append(f"- {_truncate(candidate.snippet, 280)}")
+            explanation = _format_explanation(candidate)
+            if explanation:
+                lines.append(f"  _Why: {explanation}_")
+        lines.append("")
+
+    hooks = sorted(
+        (c for c in report.ranked_candidates if c.fun_score is not None and c.fun_score >= 70),
+        key=lambda c: -(c.fun_score or 0),
+    )
+    if hooks:
+        lines.append("## Narrative Hooks")
+        lines.append("")
+        for candidate in hooks[:5]:
+            source_label = _source_label(candidate.source)
+            primary = schema.candidate_primary_item(candidate)
+            author = primary.author if primary else None
+            if author and candidate.source in ("x", "tiktok", "instagram", "threads"):
+                attribution = f"@{author} on {source_label}"
+            elif author and candidate.source == "reddit":
+                container = primary.container if primary else None
+                attribution = f"r/{container}" if container else "Reddit"
+            else:
+                attribution = source_label
+            reason = (
+                f" — {candidate.fun_explanation}"
+                if candidate.fun_explanation and candidate.fun_explanation != "heuristic-fallback"
+                else ""
+            )
+            lines.append(
+                f'- "{_truncate(candidate.title, 200)}"'
+                f" ({attribution}, fun:{candidate.fun_score:.0f}){reason}"
+            )
+        lines.append("")
+
+    tensions = [c for c in report.clusters if c.uncertainty]
+    if tensions:
+        lines.append("## Topic Tensions")
+        lines.append("")
+        for cluster in tensions[:cluster_limit]:
+            label = cluster.uncertainty.replace("-", " ").title() if cluster.uncertainty else ""
+            source_tags = ", ".join(_source_label(s) for s in cluster.sources)
+            lines.append(f"- **{cluster.title}** [{label}]: {source_tags}")
+        lines.append("")
+
+    questions = _extract_audience_questions(report.ranked_candidates)
+    if questions:
+        lines.append("## Audience Questions")
+        lines.append("")
+        for q in questions[:8]:
+            lines.append(f"- {q}")
+        lines.append("")
+
+    lines.append("## Source Clusters")
+    lines.append("")
+    for cluster in report.clusters[:cluster_limit]:
+        source_tags = " + ".join(_source_label(s) for s in cluster.sources)
+        lines.append(f"- **{cluster.title}**: {source_tags}")
+    lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+_QUESTION_WORDS: frozenset[str] = frozenset({
+    "what", "why", "how", "when", "where", "who", "which",
+    "is", "are", "can", "does", "will", "should", "would", "could",
+})
+
+
+def _extract_audience_questions(candidates: list[schema.Candidate]) -> list[str]:
+    """Return titles that read as audience questions, deduped and in ranked order."""
+    questions: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        title = candidate.title.strip()
+        if not title:
+            continue
+        first_word = title.split()[0].lower().rstrip("?")
+        if title.endswith("?") or first_word in _QUESTION_WORDS:
+            norm = title.lower()
+            if norm not in seen:
+                seen.add(norm)
+                questions.append(title)
+    return questions
+
+
 def _render_candidate(candidate: schema.Candidate, prefix: str) -> list[str]:
     primary = schema.candidate_primary_item(candidate)
     detail_parts = [

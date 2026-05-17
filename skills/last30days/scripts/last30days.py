@@ -138,6 +138,8 @@ def emit_output(
         return render.render_compact(report, fun_level=fun_level, save_path=save_path)
     if emit == "context":
         return render.render_context(report)
+    if emit == "brief":
+        return render.render_brief(report)
     raise SystemExit(f"Unsupported emit mode: {emit}")
 
 
@@ -229,7 +231,7 @@ def persist_report(report: schema.Report) -> dict[str, int]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Research a topic across live social, market, and grounded web sources.")
     parser.add_argument("topic", nargs="*", help="Research topic")
-    parser.add_argument("--emit", default="compact", choices=["compact", "json", "context", "md", "html"])
+    parser.add_argument("--emit", default="compact", choices=["compact", "json", "context", "md", "html", "brief"])
     parser.add_argument("--search", help="Comma-separated source list")
     parser.add_argument("--quick", action="store_true", help="Lower-latency retrieval profile")
     parser.add_argument("--deep", action="store_true", help="Higher-recall retrieval profile")

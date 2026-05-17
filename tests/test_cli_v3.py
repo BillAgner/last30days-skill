@@ -119,10 +119,12 @@ class CliV3Tests(unittest.TestCase):
         compact = cli.emit_output(report, "compact")
         json_output = cli.emit_output(report, "json")
         context = cli.emit_output(report, "context")
+        brief = cli.emit_output(report, "brief")
 
         self.assertIn("# last30days v3.0.0", compact)
         self.assertIn('"topic": "OpenClaw vs NanoClaw"', json_output)
         self.assertIsInstance(context, str)
+        self.assertIn("# Production Brief:", brief)
 
         with self.assertRaises(SystemExit):
             cli.emit_output(report, "bad-mode")
