@@ -12,11 +12,12 @@
 
 **An AI agent-led search engine scored by upvotes, likes, and real money - not editors.**
 
-This README tracks the current v3 pipeline. The runtime skill spec lives in [SKILL.md](SKILL.md), which is the source of truth for the latest command and setup behavior.
+This README tracks the current v3 pipeline. The runtime skill spec lives in [skills/last30days/SKILL.md](skills/last30days/SKILL.md), which is the source of truth for the latest command and setup behavior.
 
 **Claude Code (recommended — auto-updates via marketplace):**
 ```
 /plugin marketplace add mvanhorn/last30days-skill
+/plugin install last30days
 ```
 
 **Codex, Cursor, Copilot, Gemini CLI, or any of 50+ [Agent Skills](https://agentskills.io) hosts:**
@@ -152,8 +153,10 @@ Say "eli5 on" after any research run. The synthesis rewrites in plain language. 
 
 - **Free Reddit comments.** Public JSON gives you threads + top comments with upvote counts. No API key, no ScrapeCreators. Just works.
 - **YouTube transcripts that actually work.** Widened candidate pool 3x past music videos to reach talk/review content with captions.
-- **Threads, Pinterest, YouTube + TikTok comments.** Opt-in sources via ScrapeCreators. Set `INCLUDE_SOURCES=tiktok,instagram` and add threads, pinterest, youtube_comments, tiktok_comments for more. `youtube_comments` and `tiktok_comments` surface top comments with vote counts the same way Reddit does.
-- **Perplexity Sonar.** Grounded web search with citations via OpenRouter. Add `OPENROUTER_API_KEY` to unlock.
+- **TikTok, Instagram, Threads.** All three activate automatically once `SCRAPECREATORS_API_KEY` is set — same key, same per-call cost. Suppress any of them with `EXCLUDE_SOURCES=tiktok,instagram,threads` (any comma-separated subset).
+- **Pinterest.** Per-query opt-in (visual pins, narrow utility): the model passes `--search=pinterest` for the runs that need it. Requires `SCRAPECREATORS_API_KEY`.
+- **YouTube + TikTok comments.** Persistent opt-in via `INCLUDE_SOURCES=youtube_comments,tiktok_comments` because each video pulls N extra ScrapeCreators calls on top of the base search. Surface top comments with vote counts the same way Reddit does.
+- **Perplexity Sonar.** Grounded web search with citations via OpenRouter. Add `OPENROUTER_API_KEY` and `INCLUDE_SOURCES=perplexity` (it's a separate paid API — opt-in keeps you from being surprise-billed).
 - **Polymarket noise filtering.** Common-word disambiguation prevents "Apple" from matching "Will Apple release a car?"
 - **Resilient Reddit.** Timeout budgets and runtime fallback. One slow thread doesn't kill the whole run.
 - **Fun judge v2.** Humor scoring baked into the narrative. Reddit's cleverest one-liners mixed into the synthesis where they fit, not dumped in a separate section.
@@ -186,7 +189,7 @@ If you'd rather use the agent-skills install path on Claude Code, that's also su
 npx skills add mvanhorn/last30days-skill -g -a claude-code
 ```
 
-The native plugin and the `npx skills` install can coexist; Claude Code dedupes the slash command.
+The native plugin and the `npx skills` install can coexist. Note that Claude Code does not dedupe across install methods: if you have both the marketplace plugin and the `npx skills` copy active, `/last30days` will show two entries. Use one install method per machine.
 
 ### Codex, Cursor, Copilot, Gemini CLI, and other Agent Skills hosts
 
@@ -256,9 +259,39 @@ These platforms don't have relationships with each other. X doesn't know what Re
 | X / Twitter | Log into x.com in any browser | Free |
 | YouTube | `brew install yt-dlp` | Free |
 | Bluesky | App password from bsky.app | Free |
-| TikTok + Instagram + Threads + Pinterest + YouTube comments | ScrapeCreators key | 10,000 free calls |
+| TikTok + Instagram + Threads + Pinterest + YouTube comments | ScrapeCreators key | 100 free credits, then PAYG |
 | Perplexity Sonar | OpenRouter key | Pay as you go |
 | Web search | Brave Search key | 2,000 free queries/month |
+
+### macOS Keychain (optional)
+
+On macOS you can store keys in the system Keychain instead of a `.env` file. The skill picks them up automatically as the lowest-priority source — `.env` files and process environment still win on collision.
+
+```bash
+# Interactive setup — prompts for each known key, skip with empty input
+skills/last30days/scripts/setup-keychain.sh
+
+# Or store a single key by hand
+security add-generic-password -a "$USER" -s last30days-XAI_API_KEY -w "xai-..."
+
+# Inspect / clean up
+skills/last30days/scripts/setup-keychain.sh --list
+skills/last30days/scripts/setup-keychain.sh --delete XAI_API_KEY
+```
+
+Items are stored under service name `last30days-<KEY>` for the current user. On non-Darwin platforms the loader is a no-op, so there is no behaviour change for Linux/Windows users.
+
+See [CONFIGURATION.md](CONFIGURATION.md) for the full per-source key matrix, reasoning provider priority, and web-search backend priority.
+
+## Configuration
+
+Two things you'll likely want to know on day one:
+
+**Where research files are saved.** `LAST30DAYS_MEMORY_DIR` defaults to `~/Documents/Last30Days/` (Windows: `C:\Users\<you>\Documents\Last30Days\`). Override by setting that env var to any path in your shell, or `--save-dir <path>` per run. Use `--save-suffix=<name>` to keep multiple variations of the same topic separate (e.g. per client). Each run produces `<slug>-raw[-suffix].md`.
+
+**Trend monitoring across runs.** The default mode produces a fresh markdown snapshot per run. To accumulate findings over time, add `--store` to persist into a SQLite database, then use [`scripts/watchlist.py`](skills/last30days/scripts/watchlist.py) for scheduled runs (with optional Slack / webhook delivery on new findings) and [`scripts/briefing.py`](skills/last30days/scripts/briefing.py) for daily / weekly digests. The full cadence pattern is in [CONFIGURATION.md](CONFIGURATION.md#trend-monitoring-store--watchlist--briefings).
+
+Per-client wrapper scripts, custom category-peer subreddits, and the experimental beta channel for in-progress customizations are also documented in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## How it works
 

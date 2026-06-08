@@ -79,6 +79,8 @@ MOCK_AVAILABLE_SOURCES = [
     "xiaohongshu",
     "github",
     "perplexity",
+    "threads",
+    "pinterest",
     "xquik",
     "digg",
 ]
@@ -118,7 +120,9 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
         available.append("grounding")
     # Perplexity Sonar: opt-in additive source via INCLUDE_SOURCES=perplexity
     include_sources = (config.get("INCLUDE_SOURCES") or "").lower().split(",")
-    if config.get("OPENROUTER_API_KEY") and "perplexity" in include_sources:
+    if config.get("OPENROUTER_API_KEY") and (
+        "perplexity" in include_sources or (requested_sources and "perplexity" in requested_sources)
+    ):
         available.append("perplexity")
     if requested_sources and "xiaohongshu" in requested_sources and env.is_xiaohongshu_available(config):
         available.append("xiaohongshu")
@@ -128,6 +132,9 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
         available.append("pinterest")
     if env.is_xquik_available(config):
         available.append("xquik")
+    exclude = {s.strip().lower() for s in (config.get("EXCLUDE_SOURCES") or "").split(",") if s.strip()}
+    if exclude:
+        available = [s for s in available if s not in exclude]
     return available
 
 
@@ -200,7 +207,7 @@ def run(
             available = [source for source in available if source in requested_sources]
     if web_backend == "none":
         available = [s for s in available if s != "grounding"]
-    elif web_backend in ("brave", "exa", "serper") and "grounding" not in available:
+    elif web_backend in ("brave", "exa", "serper", "parallel") and "grounding" not in available:
         available.append("grounding")
     if not available:
         raise RuntimeError("No sources are available for this run.")
@@ -1000,8 +1007,14 @@ def _retrieve_stream(
         result = polymarket.search_polymarket(subquery.search_query, from_date, to_date, depth=depth)
         return polymarket.parse_polymarket_response(result, topic=subquery.search_query), {}
     if source == "github":
-        result = github.search_github(subquery.search_query, from_date, to_date, depth=depth, token=config.get("GITHUB_TOKEN"))
-        return result, {}
+        # Resolve once at the pipeline boundary so search and enrich
+        # share the result; otherwise each call would re-run the env
+        # lookup and gh-CLI subprocess fallback (up to 5s timeout each).
+        token = github.resolve_token(config.get("GITHUB_TOKEN"))
+        response = github.search_github(subquery.search_query, from_date, to_date, depth=depth, token=token)
+        items = github.parse_github_response(response)
+        items = github.enrich_with_comments(items, depth=depth, token=token)
+        return items, {}
     if source == "pinterest":
         result = pinterest.search_pinterest(
             subquery.search_query, from_date, to_date,
